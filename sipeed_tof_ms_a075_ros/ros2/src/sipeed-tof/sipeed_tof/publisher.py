@@ -17,7 +17,7 @@ import time
 from multiprocessing import Process, Pipe
 
 HOST='192.168.233.1'
-PORT=8081
+PORT=80
 IMAGECOUNT=0
 
 triggermode=1
@@ -133,7 +133,21 @@ class PointCloudPublisher(Node):
         frame = self.deepth_pipe[1].recv_bytes()
         print("end get %fms"%(time.time()))
         frameid,timestamp,triggermode,deepmode,deepshift,irmode,statusmode,statusmask,rgbmode,rgbres,expose_time,depthsize,rgbsize=struct.unpack('QQBBBBBBBBiii', frame[:36])
-        # print(frameid,timestamp,triggermode,deepmode,deepshift,irmode,statusmode,statusmask,rgbmode,rgbres,expose_time,depthsize,rgbsize)
+        #print(frameid,timestamp,triggermode,deepmode,deepshift,irmode,statusmode,statusmask,rgbmode,rgbres,expose_time,depthsize,rgbsize)
+        print(f'frameid      =  {frameid}')
+        print(f'timestamp    =  {timestamp}')
+        print(f'triggermode  =  {triggermode}')
+        print(f'deepmode     =  {deepmode}')
+        print(f'deepshift    =  {deepshift}')
+        print(f'irmode       =  {irmode}')
+        print(f'statusmode   =  {statusmode}')
+        print(f'statusmask   =  {statusmask}')
+        print(f'rgbmode      =  {rgbmode}')
+        print(f'rgbres       =  {rgbres}')
+        print(f'expose_time  =  {expose_time}')
+        print(f'depthsize    =  {depthsize}')
+        print(f'rgbsize      =  {rgbsize}')
+
         depthdata=frame[36:36+depthsize]
         rgbdata=frame[36+depthsize:36+depthsize+rgbsize]
         # print(len(rgbdata))
@@ -164,21 +178,59 @@ class PointCloudPublisher(Node):
             for y in range(240):
                 for x in range(320):
                     statusimg[y,x]=((depthdata[int((y*320+x)/8)]&(0x1<<(x%8)))>>(x%8))*255
-        if rgbmode==1:
-            rgbimage = np.frombuffer(rgbdata, dtype="uint8")
-            rgbimage = cv2.imdecode(rgbimage, cv2.IMREAD_COLOR)
-        if rgbmode==0:
-            rgbimage = np.frombuffer(rgbdata, dtype="uint8").reshape(900,800)
-            rgbimage = cv2.cvtColor(rgbimage, cv2.COLOR_YUV2BGR_I420)
-        if rgbimage is None:
-            return
-        rgbimage=cv2.resize(rgbimage,(800,600))
-        rgbimage=cv2.cvtColor(rgbimage,COLOR_RGB2RGBA)
 
-        depthimg=depthimg.astype('float32')/4.0
-        irimg=irimg.astype('float32')
+        width = 800
+        height = 600
+        rgbimage = None
+
+        if rgbmode == 1:
+            # Handle compressed image data
+            try:
+                rgbimage = np.frombuffer(rgbdata, dtype="uint8")
+                rgbimage = cv2.imdecode(rgbimage, cv2.IMREAD_COLOR)
+                if rgbimage is None:
+                    print("Error: Failed to decode compressed image data.")
+            except Exception as e:
+                print(f"Error decoding image: {e}")
+                rgbimage = None
+        elif rgbmode == 0:
+            # Handle uncompressed YUV I420 data
+            try:
+                print(f'len(rgbdata) = {len(rgbdata)}')
+                if len(rgbdata) == int(width * height * 1.5):
+                    yuvimage = np.frombuffer(rgbdata, dtype="uint8").reshape((int(height * 1.5), width))
+                    rgbimage = cv2.cvtColor(yuvimage, cv2.COLOR_YUV2BGR_I420)
+                    if rgbimage is None:
+                        print("Error: Failed to convert YUV to BGR.")
+                else:
+                    print(f"Error: rgbdata size = {rgbsize}, does not match the expected size for YUV I420 format")
+                    rgbimage = None
+            except Exception as e:
+                print(f"Error converting YUV to BGR: {e}")
+                rgbimage = None
+        else:
+            print("Error: Unsupported rgbmode")
+            rgbimage = None
+
+#        if rgbimage is None:
+#            print("Error: rgbimage is None, skipping processing.")
+#            return
+
+#        try:
+#            rgbimage = cv2.resize(rgbimage, (800, 600))
+#        except cv2.error as e:
+#            print(f"Error resizing image: {e}")
+#            return
+
+        # RGB Image
+        #rgbimage = cv2.cvtColor(rgbimage, COLOR_RGB2RGBA)
+        #rgbimage = cv2.resize(rgbimage,(800,600))
+        #rgbimage = cv2.cvtColor(rgbimage,COLOR_RGB2RGBA)
+
+        depthimg = depthimg.astype('float32')/4.0
+        irimg    = irimg.astype('float32')
         
-        points=np.zeros((240*320,3))
+        points = np.zeros((240*320,3))
         cx = np.array([t for t in range(0,320)]).reshape(1, 320).repeat(240, 0)
         cy = np.array([t for t in range(0,240)]).reshape(240, 1).repeat(320, 1)
 
@@ -221,7 +273,7 @@ class PointCloudPublisher(Node):
                             (outpointsi[:,0]>799) +
                             (outpointsi[:,1]<0) +
                             (outpointsi[:,1]>599))]=0
-        C = rgbimage[outpointsi[:,1], outpointsi[:,0]]
+        # C = rgbimage[outpointsi[:,1], outpointsi[:,0]]
         # for i in range(320):
         #     for j in range(240):
         #         pos=outpointsi[j*320+i];
@@ -240,7 +292,7 @@ class PointCloudPublisher(Node):
         # C[:,0]=np.resize(cg,(320*240))
         # C[:,0]=np.resize(cb,(320*240))
 
-        C=C.view('uint32')
+        # C=C.view('uint32')
         # print(C)
         pointsC=np.zeros((points.shape[0],1),dtype={'names':('x','y','z','rgba','intensity'),'formats':('f4','f4','f4','u4','f4')})
         points = points.astype('float32')
@@ -248,7 +300,7 @@ class PointCloudPublisher(Node):
         pointsC['x']=points[:,0].reshape((-1,1))
         pointsC['y']=points[:,1].reshape((-1,1))
         pointsC['z']=points[:,2].reshape((-1,1))
-        pointsC['rgba']=C
+        # pointsC['rgba']=C
         pointsC['intensity']=irimg.reshape((-1,1))
 
         header = Header()
@@ -272,27 +324,28 @@ class PointCloudPublisher(Node):
             PointField(name='intensity',offset=16,datatype=PointField.FLOAT32,count=1),
         ]
         msg.is_bigendian=False
-        msg.point_step=20
+        #msg.point_step=20
+        msg.point_step=1
         msg.row_step=msg.point_step*320
         msg.is_dense=False
         # cost 210ms need to be optimized
         print("start tobytes %fms"%(time.time()))
         # msg.data=pointsC.tobytes()
-        msg.data = struct.pack("%us"%(pointsC.size), pointsC)
+        msg.data = struct.pack("%us"%(pointsC.size), pointsC.tobytes())
         print("end tobytes %fms"%(time.time()))
         self.publisher_pc.publish(msg)
         depthmsg=self.bridge.cv2_to_imgmsg(depthimg)
         intensitymsg=self.bridge.cv2_to_imgmsg(irimg)
         statusmsg=self.bridge.cv2_to_imgmsg(statusimg)
-        rgbmsg=self.bridge.cv2_to_imgmsg(rgbimage)
+        #rgbmsg=self.bridge.cv2_to_imgmsg(rgbimage)
         depthmsg.header=header
         intensitymsg.header=header
         statusmsg.header=header
-        rgbmsg.header=header
+        #rgbmsg.header=header
         self.publisher_d.publish(depthmsg)
         self.publisher_i.publish(intensitymsg)
         self.publisher_s.publish(statusmsg)
-        self.publisher_rgb.publish(rgbmsg)
+        #self.publisher_rgb.publish(rgbmsg)
         self.get_logger().info('Publishing: {}'.format(msg.header.stamp))
         print("end all %fms\n\n"%(time.time()))
 
