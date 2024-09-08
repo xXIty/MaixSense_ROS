@@ -32,6 +32,7 @@ expose_time=0
 
 def decodeLensCoeff(datain:bytes):
     return struct.unpack('<9s2s2s16s4s3s2s2sBffffffffff', datain)
+
 class PointCloudPublisher(Node):
     def __init__(self):
         r=requests.get('http://{}:{}/getinfo'.format(HOST,PORT))
@@ -227,7 +228,8 @@ class PointCloudPublisher(Node):
         #rgbimage = cv2.resize(rgbimage,(800,600))
         #rgbimage = cv2.cvtColor(rgbimage,COLOR_RGB2RGBA)
 
-        depthimg = depthimg.astype('float32')/4.0
+        #depthimg = depthimg.astype('float32')/4.0
+        depthimg = depthimg.astype('float32')/1000
         irimg    = irimg.astype('float32')
         
         points = np.zeros((240*320,3))
@@ -245,17 +247,17 @@ class PointCloudPublisher(Node):
         points[:,1] = points_y
         points[:,2] = points_z
 
-        # for i in range(320):
-        #     for j in range(240):
-        #         cx=(i-self.lens_u0)/self.lens_fx
-        #         cy=(j-self.lens_v0)/self.lens_fy
-        #         dst=depthimg[j,i]
-        #         x = dst*cx
-        #         y = dst*cy
-        #         z = dst
-        #         points[j*320+i,0]=x
-        #         points[j*320+i,1]=y
-        #         points[j*320+i,2]=z
+#        for i in range(320):
+#          for j in range(240):
+#              cx=(i-self.lens_u0)/self.lens_fx
+#              cy=(j-self.lens_v0)/self.lens_fy
+#              dst=depthimg[j,i]
+#              x = dst*cx
+#              y = dst*cy
+#              z = dst
+#              points[j*320+i,0]=x
+#              points[j*320+i,1]=y
+#              points[j*320+i,2]=z
 
         R_MAT2,_=cv2.Rodrigues(self.R_MAT.transpose())
         print("start proj %fms"%(time.time()))
@@ -296,23 +298,22 @@ class PointCloudPublisher(Node):
         # print(C)
         pointsC=np.zeros((points.shape[0],1),dtype={'names':('x','y','z','rgba','intensity'),'formats':('f4','f4','f4','u4','f4')})
         points = points.astype('float32')
-        points=points/1000
+        #points=points/1000
         pointsC['x']=points[:,0].reshape((-1,1))
         pointsC['y']=points[:,1].reshape((-1,1))
         pointsC['z']=points[:,2].reshape((-1,1))
         # pointsC['rgba']=C
         pointsC['intensity']=irimg.reshape((-1,1))
 
-        header = Header()
-        if False:
-            header.stamp = self.get_clock().now()
-        else:
-            header.stamp = Time(nanoseconds=timestamp*1000).to_msg()
+        # Just before packing the pointsC data into bytes and publishing
+        print(f"pointsC['x']: {pointsC['x'][:10]}")
+        print(f"pointsC['y']: {pointsC['y'][:10]}")
+        print(f"pointsC['z']: {pointsC['z'][:10]}")
 
-        if False:
-            header.frame_id = 'None'
-        else:
-            header.frame_id = 'tof'
+
+        header = Header()
+        header.stamp = Time(nanoseconds=timestamp*1000).to_msg()
+        header.frame_id = 'tof'
         msg.header=header
         msg.height=240
         msg.width = 320
@@ -324,14 +325,13 @@ class PointCloudPublisher(Node):
             PointField(name='intensity',offset=16,datatype=PointField.FLOAT32,count=1),
         ]
         msg.is_bigendian=False
-        #msg.point_step=20
-        msg.point_step=1
+        msg.point_step=20
         msg.row_step=msg.point_step*320
         msg.is_dense=False
         # cost 210ms need to be optimized
         print("start tobytes %fms"%(time.time()))
-        # msg.data=pointsC.tobytes()
-        msg.data = struct.pack("%us"%(pointsC.size), pointsC.tobytes())
+        msg.data=pointsC.tobytes()
+        #msg.data = struct.pack("%us"%(pointsC.size), pointsC.tobytes())
         print("end tobytes %fms"%(time.time()))
         self.publisher_pc.publish(msg)
         depthmsg=self.bridge.cv2_to_imgmsg(depthimg)
